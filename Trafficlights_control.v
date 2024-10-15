@@ -1,8 +1,8 @@
 module traffic_light_controller (
     input clk,
     input rst,
-    output reg [2:0] ns_light,
-    output reg [2:0] ew_light
+    output reg [2:0] ns_light, // for north south
+    output reg [2:0] ew_light // for est west
 );
 
     reg [3:0] state;
@@ -33,4 +33,38 @@ module traffic_light_controller (
                 end
 
                 NS_YELLOW: begin
-              
+                    ns_light <= 3'b010;
+                    ew_light <= 3'b100;
+                    if (timer == 16'd10000) begin
+                        timer <= 0;
+                        state <= EW_GREEN;
+                    end
+                end
+
+                EW_GREEN: begin
+                    ns_light <= 3'b100;
+                    ew_light <= 3'b001;
+                    if (timer == 16'd50000) begin
+                        timer <= 0;
+                        state <= EW_YELLOW;
+                    end
+                end
+
+                EW_YELLOW: begin
+                    ns_light <= 3'b100;
+                    ew_light <= 3'b010;
+                    if (timer == 16'd10000) begin
+                        timer <= 0;
+                        state <= NS_GREEN;
+                    end
+                end
+
+                default: begin
+                    ns_light <= 3'b100;
+                    ew_light <= 3'b100;
+                    state <= NS_GREEN;
+                end
+            endcase
+        end
+    end
+endmodule
