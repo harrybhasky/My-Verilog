@@ -1,0 +1,411 @@
+
+`include "funceditor.v"
+
+module image_editor #(
+  parameter
+  height = 300,
+  width = 400,
+  Infile = "pic1.hex",
+  startdelay = 100,
+  hsync_delay = 160,
+  threshold = 90,
+  sign =1,
+  value = 100
+)
+  
+  ( input HCLK,
+   input HRESETn, // for reset active low
+   output reg HSYNC,
+   output VSYNC,
+   output reg [7:0] Data_R_even,
+   output reg [7:0] Data_G_even,
+   output reg [7:0] Data_B_even,
+   output reg [7:0] Data_R_odd,
+   output reg [7:0] Data_B_odd,
+   output reg [7:0] Data_G_odd,
+   output ctrl_over
+  );
+  
+  integer temp_bmp [0: height*width*3 - 1];
+  integer temp_R [0: height*width - 1];
+  integer temp_B [0: height*width -1];
+  integer temp_G [ 0: height*width -1];
+  
+  
+  // variables for  traversing
+  integer i,j;
+  
+  // temporary variables for brightness and contrast operation
+  integer temp_rc, temp_rb, temp_bc, temp_bb, temp_gc, temp_gb;
+  
+  // temp variables for inversion operation
+  integer val_inv,val_inv_odd,avg_val,avg_val_odd;
+  
+  reg [9:0] row;
+  reg [10:0] col;
+  reg [19:0] pix_count;
+  
+  parameter widthlength =8;
+  parameter total_length = 360000; // 3*300*400
+  
+  // for FSM
+  
+  localparam state_idle = 2'b00,
+  state_HSYNC = 2'b01,
+  state_datapro = 2'b10,
+  state_VSYNC = 2'b11;
+  
+  reg [1:0] cstate, nstate;
+  reg start;
+  reg HRESETn_delayed;
+  reg  ctrl_VSYNC_run;
+  reg [8:0] VSYNC_ctr;
+  reg ctrl_hsync_run;
+  reg [8:0] hsync_ctr;
+  reg ctrl_data_run;
+  reg [7 : 0]   total_memory [0 : total_length-1];// memory to store  8-bit data image
+
+
+  
+  // reading data
+  
+  initial
+    begin
+      $readmemh(Infile, total_memory, 0, total_length-1);
+    end
+  
+  // data is stored in array
+  
+  
+  
+  // saving RGB data
+  always@(start) begin
+    if (start == 1'b1) begin
+      for(i=0; i <width*height*3; i=i+1) begin
+        temp_bmp[i] = total_memory[i+0][7:0];
+      end
+      
+      for(i=0; i<height; i=i+1) begin
+        for(j=0; j<width; j=j+1) begin
+          // cuz image data is written from last to first row
+          temp_R[width*i +j] = temp_bmp[width*3*(height-i-1) +3*j+0]; // Red data*
+          temp_G[width*i +j] = temp_bmp[width*3*(height-i-1) +3*j+1]; // Green data
+          temp_B[width*i +j] = temp_bmp[width*3*(height-i-1) +3*j+2]; // Blu Data
+          
+        end
+    end
+            end
+            end
+            
+            always@(posedge HCLK, negedge HRESETn)
+              begin
+                if (!HRESETn ) begin
+                  start <= 0;
+                  HRESETn_delayed <= 0;
+                end
+                else begin
+                  HRESETn_delayed <= HRESETn;
+                  if(HRESETn == 1'b1 && HRESETn_delayed == 1'b0)
+                    start <= 1'b1;
+                  else 
+                    start <= 1'b0;
+                end
+              end
+            
+            // FSM
+            
+  always@(posedge HCLK or negedge HRESETn)
+              begin
+                if(~HRESETn) begin
+                    cstate <= state_idle;
+                end
+                else begin
+                    cstate <= nstate;
+                end
+              end
+
+// HYSNC and signal transitions
+
+always@(*) begin
+    case(cstate)
+    state_idle: begin
+        if(start)
+        nstate = state_VSYNC;
+        else
+        nstate = state_idle;
+    end
+
+    state_VSYNC: begin
+        if (VSYNC_ctr == startdelay)
+        nstate = state_HSYNC;
+        else nstate = state_VSYNC;
+    end
+
+    state_HSYNC: begin
+        if (hsync_ctr == hsync_delay)
+        nstate = state_datapro;
+        else
+        nstate = state_HSYNC;
+    end
+
+    state_datapro: begin
+        if(ctrl_over)
+        nstate = state_idle;
+        else begin
+            if(col == width -2)
+            nstate = state_HSYNC;
+            else 
+            nstate = state_datapro;
+        end
+    end
+    endcase
+end
+
+// FSM for counting of VSYNC hsync and data processing
+always @(*) begin
+    ctrl_VSYNC_run = 0;
+    ctrl_hsync_run = 0;
+    ctrl_data_run =0;
+    case(cstate)
+    state_VSYNC: begin
+        ctrl_VSYNC_run =1;
+    end
+    state_HSYNC: begin
+        ctrl_hsync_run =1;
+    end
+    state_datapro: begin
+        ctrl_data_run = 1;
+    end
+    endcase
+end
+
+// counting column and rows
+
+  always @(posedge HCLK or negedge HRESETn)
+begin
+    if(~HRESETn) begin
+        row <=0;
+        col <= 0;
+    end
+
+    else begin
+        if (ctrl_data_run) begin
+            if (col == width -2)
+            begin
+                row <= row + 1;
+            end
+        if (col == width -2)
+        col <= 0;
+        else
+        col <= col +2;
+        end
+    end
+end
+
+
+// setting up counters for VSYNC and hsync
+
+always @(posedge HCLK, negedge HRESETn)
+begin
+    if (~HRESETn) begin
+        VSYNC_ctr <= 0;
+        hsync_ctr <= 0;
+    end
+    else begin
+        if(ctrl_VSYNC_run)
+        VSYNC_ctr = VSYNC_ctr +1;
+        else
+        VSYNC_ctr <= 0;
+
+        if(ctrl_hsync_run)
+        hsync_ctr = hsync_ctr +1;
+        else
+        hsync_ctr <= 0;
+    end
+end
+
+//counting the data
+
+always@(posedge HCLK, negedge HRESETn)
+begin
+  if (~HRESETn) begin
+    pix_count <= 0;
+  end
+
+  else begin
+    if(ctrl_data_run)
+    pix_count <= pix_count + 1;
+  end
+end
+
+assign VSYNC = ctrl_VSYNC_run;
+assign ctrl_over = (pix_count == 360000) ? 1'b1: 1'b0;
+
+// processing the img
+
+always@(*)  begin
+    HSYNC = 1'b0;
+    Data_B_even = 0;
+    Data_B_odd = 0;
+    Data_G_even= 0;
+    Data_G_odd = 0;
+    Data_R_even = 0;
+    Data_R_odd = 0;
+
+    if (ctrl_data_run) begin
+
+        HSYNC = 1'b1;
+
+        // BRIGHTNESS OP
+
+        `ifdef BRIGHTNESS_OP
+
+// brightness addition
+
+if(sign == 1) begin
+
+temp_rb = temp_R[width*row + col] + value;
+if (temp_rb > 255)
+Data_R_even = 255;
+else
+Data_R_even = temp_R[width*row + col] + value;
+
+temp_rc = temp_R[width*row + col] + value;
+if (temp_rc > 255)
+Data_R_odd = 255;
+else
+Data_R_odd = temp_R[width*row + col] + value;
+
+temp_gb = temp_G[width*row + col] + value;
+if (temp_gb > 255)
+Data_G_even = 255;
+else
+Data_G_even = temp_G[width*row + col] + value;
+
+temp_gc = temp_G[width*row + col] + value;
+if (temp_gc > 255)
+Data_G_odd = 255;
+else
+Data_G_odd = temp_G[width*row + col] + value;
+
+temp_bb = temp_B[width*row + col] + value;
+if (temp_bb > 255)
+Data_B_even = 255;
+else
+Data_B_even = temp_B[width*row + col] + value;
+
+temp_bc = temp_B[width*row + col] + value;
+if (temp_bc > 255)
+Data_B_odd = 255;
+else
+Data_B_odd = temp_B[width*row + col] + value;
+
+end
+
+else begin
+
+// Brigtness subtraction
+temp_rb = temp_R[width*row + col] - value;
+if(temp_rb < 0)
+Data_R_even = 0;
+else 
+Data_R_even = temp_R[width*row + col] - value;
+
+temp_rc = temp_R[width*row + col] - value;
+if(temp_rc < 0)
+Data_R_odd = 0;
+else 
+Data_R_odd = temp_R[width*row + col] - value;
+
+temp_gb = temp_G[width*row + col] - value;
+if(temp_gb < 0)
+Data_G_even = 0;
+else 
+Data_G_even = temp_G[width*row + col] - value;
+
+temp_gc = temp_G[width*row + col] - value;
+if(temp_gc < 0)
+Data_G_odd = 0;
+else 
+Data_G_odd = temp_G[width*row + col] - value;
+
+temp_bb = temp_B[width*row + col] - value;
+if(temp_bb < 0)
+Data_B_even = 0;
+else 
+Data_B_even = temp_B[width*row + col] - value;
+
+temp_bc = temp_B[width*row + col] - value;
+if(temp_bc < 0)
+Data_B_odd = 0;
+else 
+Data_B_odd = temp_B[width*row + col] - value;
+
+end
+`endif
+
+
+//////////////////////////////////////
+// Threshold Op
+//////////////////////////////////////
+
+
+`ifdef THRESHOLD_OP
+
+avg_val = (temp_R[width*row + col] + temp_G[width*row + col] + temp_B[width*row + col])/3;
+if (avg_val>threshold) begin
+    Data_B_even = 255;
+    Data_G_even = 255;
+    Data_R_even = 255;
+end
+
+else begin
+    Data_B_even = 0;
+    Data_R_even = 0;
+    Data_G_even = 0;
+
+end
+
+avg_val_odd = (temp_R[width*row + col+1] + temp_G[width*row + col+1] + temp_B[width*row + col+1])/3;
+
+if(avg_val_odd>threshold)     begin
+    Data_R_odd = 255;
+    Data_G_odd = 255;
+    Data_B_odd = 255;
+end
+
+else begin
+Data_B_odd =0;
+Data_G_odd=0;
+Data_R_odd=0;
+
+end
+    `endif
+
+///////////////////////////////////////
+// Inversion Op
+//////////////////////////////////////
+
+
+`ifdef INVERT_OP
+
+val_inv = (temp_B[width*row + col] + temp_R[width*row + col] + temp_G[width*row + col])/3;
+
+Data_B_even = 255 - val_inv;
+Data_G_even = 255 - val_inv;
+Data_R_even = 255 - val_inv;
+
+val_inv_odd = (temp_B[width*row + col + 1] + temp_R[width*row + col+1] + temp_G[width*row + col + 1])/3;
+
+Data_B_odd = 255 - val_inv_odd;
+Data_G_odd = 255 - val_inv_odd;
+Data_R_odd = 255 - val_inv_odd;
+
+    `endif
+
+    end
+end
+
+endmodule
+
+/// lesgoooooo!
