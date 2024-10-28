@@ -1,0 +1,7 @@
+`define INPUTFILENAME "pic1.hex"  
+`define OUTPUTFILENAME "output.bmp" 
+ 
+
+//`define BRIGHTNESS_OP
+ `define INVERT_OP 
+//`define THRESHOLD_OP
